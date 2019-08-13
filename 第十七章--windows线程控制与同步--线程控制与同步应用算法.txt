@@ -1,0 +1,355 @@
+#ifndef _VSM
+#define _VSM
+
+#include "iostream"
+#include "windows.h"
+#include "string"
+#include "sstream"
+#include "stdio.h"
+#include "vector"
+#include "time.h"
+
+
+using namespace std;
+
+const int MAXCUS=20;
+const int CUSINMAR=15;
+const int MAXQUEUE=5;
+const int GOODS=5;
+const int MAXCOUNTER=3;
+const int PRICE[GOODS+1]={5,100,12,30,500,7};
+const int MAXQUANTITY[GOODS+1]={5,2,10,5,1,7};
+const int MILLIONS=1000;
+
+
+class MyThread{
+protected:
+	HANDLE myhandle;
+	string myname;
+	static DWORD WINAPI ThreadProc(LPVOID lpParam);
+public:
+	MyThread(string name="");
+	virtual ~MyThread();
+	void start();
+	virtual void run()=0;
+	virtual void WaitForCompletion();
+	int get_random();
+};
+
+
+class SuperMarket:public MyThread
+{
+public:
+	void output(string os);
+	SuperMarket();
+	virtual void run();
+	~SuperMarket();
+
+};
+
+
+class Customer:public MyThread
+{
+protected:
+	static HANDLE ThreadNumMutex,CounterMutex[MAXCOUNTER],AccessCounter,CookMutex,AccessCookCounter;
+    static int counter[MAXCOUNTER];
+	int countertime;
+	static int cookcounter;
+	int cost;
+	void static setCustomerNumber();
+	void static setCounter();
+	void static setCookMutex();
+	void handlecounter();
+	void shopping();
+public:
+	Customer(int ID);
+	void static initialize();
+	virtual void run();
+	static void closehandle();
+
+} ;
+
+
+#endif
+//////////////////////////////////////////////////////
+#include "vsm.h"
+#include <fstream>
+ofstream ff("result.txt");
+MyThread::MyThread(string name ):myname(name),myhandle(INVALID_HANDLE_VALUE)
+{
+
+}
+void MyThread::start()
+{
+   myhandle=CreateThread(NULL,0,ThreadProc,reinterpret_cast<LPVOID>(this),0,NULL);
+}
+
+void MyThread::WaitForCompletion()
+{
+   WaitForSingleObject(myhandle,INFINITE);
+}
+
+MyThread::~MyThread()
+{
+    CloseHandle(myhandle);
+
+}
+
+DWORD WINAPI MyThread::ThreadProc(LPVOID lpParam)
+{
+   MyThread *pthis=reinterpret_cast<MyThread*>(lpParam);
+   pthis->run();
+   return(0);
+}
+int MyThread::get_random()
+{
+  int t;
+  srand((unsigned)(GetCurrentProcessId()+time(NULL)));
+  t=rand()%5000;
+  return t;
+
+}
+
+SuperMarket::SuperMarket():MyThread()
+{
+
+}
+
+void SuperMarket::output(string os)
+{ 
+	printf("%s\n",os.c_str());
+	fflush(stdout);
+	ff<<os.c_str()<<"\n"<<endl;
+}
+
+void SuperMarket::run()
+{
+   vector<Customer>cus;
+   output("market create.");
+   Customer::initialize();
+   for(int i=0;i<MAXCUS;i++)
+   {
+     cus.push_back(Customer(i));
+   
+   }
+   for(vector<Customer>::iterator it=cus.begin();it!=cus.end();it++)
+   {
+     it->start();
+	 Sleep(get_random()%MILLIONS+MILLIONS);
+
+   }
+   for(it=cus.begin();it!=cus.end();it++)
+   {
+      it->WaitForCompletion();
+
+   }
+   Customer::closehandle();
+
+}
+
+
+SuperMarket::~SuperMarket()
+{
+	output("market close");
+	ff<<"market close."<<endl;
+	Sleep(MILLIONS*4);
+
+}
+
+HANDLE Customer::ThreadNumMutex=INVALID_HANDLE_VALUE;
+HANDLE Customer::AccessCounter=INVALID_HANDLE_VALUE;
+HANDLE Customer::CounterMutex[MAXCOUNTER]={INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE,INVALID_HANDLE_VALUE};
+HANDLE Customer::CookMutex=INVALID_HANDLE_VALUE;
+HANDLE Customer::AccessCookCounter=INVALID_HANDLE_VALUE;
+int Customer::counter[MAXCOUNTER]={0};
+int Customer::cookcounter=0;
+	
+void Customer::setCustomerNumber()
+{
+	ThreadNumMutex=CreateSemaphore(NULL,CUSINMAR,CUSINMAR,NULL);
+}
+void Customer::setCounter()
+{
+	for(int i=0;i<MAXCOUNTER;i++)
+	{
+		CounterMutex[i]=CreateMutex(NULL,1,NULL);
+		ReleaseMutex(CounterMutex[i]);
+	}
+	AccessCounter=CreateMutex(NULL,TRUE,NULL);
+	ReleaseMutex(AccessCounter);
+}
+void Customer::setCookMutex()
+{
+	CookMutex=CreateMutex(NULL,TRUE,NULL);
+	ReleaseMutex(CookMutex);
+	AccessCookCounter=CreateMutex(NULL,TRUE,NULL);
+	ReleaseMutex(AccessCookCounter);
+}
+void Customer::handlecounter()
+{
+	int min=0;
+	if(countertime!=0)
+	{
+		if(AccessCounter!=INVALID_HANDLE_VALUE)
+		{
+			WaitForSingleObject(AccessCounter,INFINITE);
+		}
+		for(int i=1;i<MAXCOUNTER;i++)
+		{
+			if(counter[min]>counter[i])
+			{
+			min=i;
+			}
+		}
+	
+	counter[min]++;
+	if(AccessCounter!=INVALID_HANDLE_VALUE)
+	{
+		ReleaseMutex(AccessCounter);
+	}
+	printf("user %s come to counter %d ,pay money %d \n",myname.c_str(),min,cost);
+	fflush(stdout);
+	ff<<"user"<<myname.c_str()<<"come to counter"<<min<<",pay money"<<cost<<endl;
+	if(CounterMutex[min]!=INVALID_HANDLE_VALUE)
+	{
+		WaitForSingleObject(CounterMutex[min],INFINITE);
+	}	
+	Sleep(MILLIONS*countertime);
+	printf("user %s counterok %d.\n",myname.c_str(),min);
+	fflush(stdout);
+	ff<<"user"<<myname.c_str()<<"counter ok"<<min<<"."<<endl;
+	if(AccessCounter!=INVALID_HANDLE_VALUE)
+	{
+		WaitForSingleObject(AccessCounter,INFINITE);
+	}
+	counter[min]--;
+	if(AccessCounter!=INVALID_HANDLE_VALUE)
+	{
+		ReleaseMutex(AccessCounter);
+	}
+	if(CounterMutex[min]!=INVALID_HANDLE_VALUE)
+	{
+		ReleaseMutex(CounterMutex[min]);
+	}
+	}
+}
+Customer::Customer(int ID)
+{
+	ostringstream info;
+	info<<ID;
+	MyThread::myname=info.str();
+	countertime=0;
+	cost=0;
+}
+void Customer::initialize()
+{
+	setCustomerNumber();
+	setCounter();
+	setCookMutex();
+}
+void Customer::run()
+{
+	printf("user %s come in market.\n",myname.c_str());
+	fflush(stdout);
+	ff<<"user"<<myname.c_str()<<"come in market."<<endl;
+	if(ThreadNumMutex!=INVALID_HANDLE_VALUE)
+	{
+		WaitForSingleObject(ThreadNumMutex,INFINITE);
+	}
+	printf("user %s to market ok.\n",myname.c_str());
+	ff<<"user"<<myname.c_str()<<"to market ok."<<endl;
+	shopping();
+	handlecounter();
+	printf("user %s exit.\n",myname.c_str());
+	fflush(stdout);
+	ff<<"user"<<myname.c_str()<<"exit."<<endl;
+	if(ThreadNumMutex!=INVALID_HANDLE_VALUE)
+	{
+		LONG np(0);
+		ReleaseSemaphore(ThreadNumMutex,1,&np);
+	}
+}
+void Customer::closehandle()
+{
+	CloseHandle(ThreadNumMutex);
+	CloseHandle(AccessCounter);
+	CloseHandle(CookMutex);
+	CloseHandle(AccessCookCounter);
+	for(int i=0;i<MAXCOUNTER;i++)
+	{
+		CloseHandle(CounterMutex[i]);
+	}
+}
+void Customer::shopping()
+{
+	int ran1;
+	int ran2;
+	countertime=0;
+	cost=0;
+	ran1=get_random()%(GOODS+1);
+	while(ran1<GOODS)
+	{
+		printf("user %s shop %d\n",myname.c_str(),ran1+1 );
+		fflush(stdout);
+		ff<<"user"<<myname.c_str()<<"shop"<<ran1+1<<"."<<endl;
+		countertime=countertime+2;
+		cost+=PRICE[ran1+1]*(get_random()%MAXQUANTITY[ran1+1]+1);
+		Sleep(MILLIONS*4);
+		ran1=get_random()%(GOODS+1);
+	}
+	if((ran2=get_random()%100)<=70)
+	{
+		if(AccessCookCounter!=INVALID_HANDLE_VALUE)
+		{
+			WaitForSingleObject(AccessCookCounter,INFINITE);
+			cookcounter++;
+			if(cookcounter<=MAXQUEUE)
+			{
+				ReleaseMutex(AccessCookCounter);
+				if(CookMutex!=INVALID_HANDLE_VALUE)
+				{
+					printf("user %s buy beef.\n",myname.c_str() );
+					fflush(stdout);
+					ff<<"user"<<myname.c_str()<<"buy beef."<<endl;
+					WaitForSingleObject(CookMutex,INFINITE);
+					countertime=countertime+2;
+					Sleep(MILLIONS*4);
+					printf("user %s beef ok.\n",myname.c_str() );
+					fflush(stdout);
+					ff<<"user"<<myname.c_str()<<"beef ok."<<endl;
+					cost+=PRICE[0]*(get_random()%MAXQUANTITY[0]+1);
+					WaitForSingleObject(AccessCookCounter,INFINITE);
+					cookcounter--;
+					if(cookcounter<0)
+					{
+						cookcounter=0;
+					}
+					ReleaseMutex(AccessCookCounter);
+					ReleaseMutex(CookMutex);
+				}
+
+			}
+			else
+			{
+				cookcounter=MAXQUEUE;
+				ReleaseMutex(AccessCookCounter);
+			}
+		}
+	}
+}
+////////////////////////////////////////////
+
+#include "vsm.h"
+#include "vsm.cpp"
+
+int main(int argc, char *argv[])
+{
+
+
+	SuperMarket suMar;
+	srand(time(0));
+	suMar.start();
+	suMar.WaitForCompletion();
+	return 0;
+
+}
